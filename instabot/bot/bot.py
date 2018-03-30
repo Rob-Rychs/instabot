@@ -10,7 +10,7 @@ from .bot_get import get_geotag_medias, get_timeline_users, get_hashtag_users, g
 from .bot_get import get_media_commenters, get_userid_from_username, get_username_from_userid
 from .bot_get import get_user_followers, get_user_following, get_media_likers, get_popular_medias
 from .bot_get import get_media_comments, get_geotag_users, get_locations_from_coordinates, convert_to_user_id
-from .bot_get import get_comment, get_media_info, get_user_likers, get_archived_medias, get_total_user_medias
+from .bot_get import get_comment, get_media_info, get_user_likers, get_archived_medias, get_total_user_medias, search_users
 
 from .bot_like import like, like_medias, like_timeline, like_user, like_users
 from .bot_like import like_hashtag, like_geotag, like_followers, like_following
@@ -43,13 +43,12 @@ from .bot_filter import filter_medias, check_media, filter_users, check_user
 from .bot_filter import check_not_bot
 
 from .bot_support import check_if_file_exists, read_list_from_file, check_whitelists
-from .bot_support import add_whitelist, add_blacklist
+from .bot_support import add_whitelist, add_blacklist, extract_urls, console_print
 
 from .bot_stats import save_user_stats
 
 
 class Bot(API):
-
     def __init__(self,
                  whitelist=False,
                  blacklist=False,
@@ -64,6 +63,8 @@ class Bot(API):
                  max_unblocks_per_day=100,
                  max_likes_to_like=100,
                  filter_users=True,
+                 filter_business_accounts=True,
+                 filter_verified_accounts=True,
                  max_followers_to_follow=2000,
                  min_followers_to_follow=10,
                  max_following_to_follow=2000,
@@ -79,7 +80,9 @@ class Bot(API):
                  comment_delay=60,
                  block_delay=30,
                  unblock_delay=30,
-                 stop_words=['shop', 'store', 'free']):
+                 stop_words=('shop', 'store', 'free'),
+                 verbosity=True,
+                 ):
         super(Bot, self).__init__()
 
         self.total_liked = 0
@@ -104,6 +107,8 @@ class Bot(API):
 
         # limits - follow
         self.filter_users = filter_users
+        self.filter_business_accounts = filter_business_accounts
+        self.filter_verified_accounts = filter_verified_accounts
         self.max_likes_per_day = max_likes_per_day
         self.max_unlikes_per_day = max_unlikes_per_day
         self.max_follows_per_day = max_follows_per_day
@@ -147,6 +152,8 @@ class Bot(API):
         if blacklist:
             self.blacklist = read_list_from_file(blacklist)
 
+        self.verbosity = verbosity
+
         # comment file
         self.comments = []
         if comments_file:
@@ -165,16 +172,18 @@ class Bot(API):
         save_checkpoint(self)
         super(Bot, self).logout()
         self.logger.info("Bot stopped. "
-                         "Worked: %s" % (datetime.datetime.now() - self.start_time))
+                         "Worked: %s", datetime.datetime.now() - self.start_time)
         self.print_counters()
 
     def login(self, **args):
         if self.proxy:
             args['proxy'] = self.proxy
-        super(Bot, self).login(**args)
+        if super(Bot, self).login(**args) is False:
+            return False
         self.prepare()
         signal.signal(signal.SIGTERM, self.logout)
         atexit.register(self.logout)
+        return True
 
     def prepare(self):
         storage = load_checkpoint(self)
@@ -182,31 +191,43 @@ class Bot(API):
             self.total_liked, self.total_unliked, self.total_followed, self.total_unfollowed, self.total_commented, self.total_blocked, self.total_unblocked, self.total_requests, self.start_time, self.total_archived, self.total_unarchived = storage
         if not self.whitelist:
             self.whitelist = check_whitelists(self)
-        self.whitelist = list(
-            filter(None, map(self.convert_to_user_id, self.whitelist)))
+        self.whitelist = self.convert_whitelist(self.whitelist)
         self.blacklist = list(
             filter(None, map(self.convert_to_user_id, self.blacklist)))
 
+    def convert_whitelist(self, usernames):
+        """
+        Will convert every username in the whitelist to the user id.
+        """
+        ret = []
+        for u in usernames:
+            uid = self.convert_to_user_id(u)
+            if uid and uid not in ret:
+                ret.append(uid)
+            else:
+                print("WARNING: Whitelisted user '%s' not found" % u)
+        return ret
+
     def print_counters(self):
         if self.total_liked:
-            self.logger.info("Total liked: %d" % self.total_liked)
+            self.logger.info("Total liked: %d", self.total_liked)
         if self.total_unliked:
-            self.logger.info("Total unliked: %d" % self.total_unliked)
+            self.logger.info("Total unliked: %d", self.total_unliked)
         if self.total_followed:
-            self.logger.info("Total followed: %d" % self.total_followed)
+            self.logger.info("Total followed: %d", self.total_followed)
         if self.total_unfollowed:
-            self.logger.info("Total unfollowed: %d" % self.total_unfollowed)
+            self.logger.info("Total unfollowed: %d", self.total_unfollowed)
         if self.total_commented:
-            self.logger.info("Total commented: %d" % self.total_commented)
+            self.logger.info("Total commented: %d", self.total_commented)
         if self.total_blocked:
-            self.logger.info("Total blocked: %d" % self.total_blocked)
+            self.logger.info("Total blocked: %d", self.total_blocked)
         if self.total_unblocked:
-            self.logger.info("Total unblocked: %d" % self.total_unblocked)
+            self.logger.info("Total unblocked: %d", self.total_unblocked)
         if self.total_archived:
-            self.logger.info("Total archived: %d" % self.total_archived)
+            self.logger.info("Total archived: %d", self.total_archived)
         if self.total_unarchived:
-            self.logger.info("Total unarchived: %d" % self.total_unarchived)
-        self.logger.info("Total requests: %d" % self.total_requests)
+            self.logger.info("Total unarchived: %d", self.total_unarchived)
+        self.logger.info("Total requests: %d", self.total_requests)
 
     # getters
 
@@ -296,6 +317,9 @@ class Bot(API):
     def get_media_id_from_link(self, link):
         return get_media_id_from_link(self, link)
 
+    def search_users(self, query):
+        return search_users(self, query)
+
     def convert_to_user_id(self, usernames):
         return convert_to_user_id(self, usernames)
 
@@ -322,8 +346,8 @@ class Bot(API):
     def like_users(self, user_ids, nlikes=None, filtration=True):
         return like_users(self, user_ids, nlikes, filtration)
 
-    def like_followers(self, user_id, nlikes=None):
-        return like_followers(self, user_id, nlikes)
+    def like_followers(self, user_id, nlikes=None, nfollows=None):
+        return like_followers(self, user_id, nlikes, nfollows)
 
     def like_following(self, user_id, nlikes=None):
         return like_following(self, user_id, nlikes)
@@ -493,8 +517,11 @@ class Bot(API):
 
     # support
 
-    def check_if_file_exists(self, file_path):
-        return check_if_file_exists(file_path)
+    def check_if_file_exists(self, file_path, quiet=False):
+        return check_if_file_exists(file_path, quiet)
+
+    def extract_urls(self, text):
+        return extract_urls(text)
 
     def read_list_from_file(self, file_path):
         return read_list_from_file(file_path)
@@ -504,6 +531,9 @@ class Bot(API):
 
     def add_blacklist(self, file_path):
         return add_blacklist(self, file_path)
+
+    def console_print(self, text):
+        return console_print(self, text)
 
     # stats
 

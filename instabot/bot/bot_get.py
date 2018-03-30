@@ -13,7 +13,8 @@ def get_media_owner(self, media_id):
     self.mediaInfo(media_id)
     try:
         return str(self.LastJson["items"][0]["user"]["pk"])
-    except:
+    except Exception as ex:
+        self.logger.error("Error: get_media_owner(%s)\n%s", media_id, ex)
         return False
 
 
@@ -109,7 +110,6 @@ def get_media_info(self, media_id):
 
 
 def get_timeline_users(self):
-    # TODO: returns list userids who just posted on your timeline feed
     if not self.getTimelineFeed():
         self.logger.warning("Error while getting timeline feed.")
         return []
@@ -187,8 +187,16 @@ def get_media_commenters(self, media_id):
     return [str(item["user"]["pk"]) for item in self.LastJson['comments']]
 
 
+def search_users(self, query):
+    self.searchUsers(query)
+    if "users" not in self.LastJson:
+        self.logger.info("Users with %s not found." % query)
+        return []
+    return [str(user['pk']) for user in self.LastJson['users']]
+
+
 def get_comment(self):
-    if len(self.comments):
+    if self.comments:
         return random.choice(self.comments).strip()
     return "wow"
 

@@ -5,9 +5,8 @@
     1) Repost photo to your account
 """
 
-import sys
-
 import os
+import sys
 
 sys.path.append(os.path.join(sys.path[0], '../'))
 from instabot import Bot
